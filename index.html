@@ -3,45 +3,55 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>台南停車搜尋</title>
+    <title>PARK-PRO 最終整合版</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        body { -webkit-tap-highlight-color: transparent; font-family: system-ui, -apple-system, sans-serif; }
         #map { height: 100vh; width: 100vw; z-index: 1; }
         .drawer {
             position: fixed; bottom: 0; left: 0; right: 0;
-            height: 45vh; background: white; z-index: 1002;
-            border-radius: 20px 20px 0 0; box-shadow: 0 -5px 25px rgba(0,0,0,0.15);
-            display: flex; flex-direction: column;
+            height: 42vh; background: white; z-index: 1002;
+            border-radius: 24px 24px 0 0; box-shadow: 0 -10px 40px rgba(0,0,0,0.15);
+            display: flex; flex-direction: column; transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
-        #list-container { overflow-y: auto; flex: 1; -webkit-overflow-scrolling: touch; }
-        .park-card { padding: 18px; border-bottom: 1px solid #f1f5f9; }
+        #list-container { overflow-y: auto; flex: 1; -webkit-overflow-scrolling: touch; padding-bottom: 20px; }
+        .park-card { padding: 18px; border-bottom: 1px solid #f1f5f9; transition: background 0.2s; }
+        .park-card:active { background: #f8fafc; }
         .nav-btn { 
-            background: #059669; color: white; padding: 12px; 
-            border-radius: 12px; text-align: center; font-weight: bold;
-            display: block; margin-top: 10px; text-decoration: none;
+            background: #059669; color: white; padding: 12px; border-radius: 14px; 
+            text-align: center; font-weight: bold; display: block; margin-top: 10px;
+            text-decoration: none; box-shadow: 0 4px 12px rgba(5, 150, 105, 0.2);
         }
         .locate-fab {
-            position: fixed; right: 20px; bottom: calc(45vh + 20px);
-            z-index: 1001; background: #3b82f6; width: 56px; height: 56px;
-            border-radius: 28px; color: white; font-size: 24px;
-            box-shadow: 0 4px 15px rgba(59,130,246,0.4); border: none;
+            position: fixed; right: 20px; bottom: calc(42vh + 20px);
+            z-index: 1001; background: #3b82f6; width: 60px; height: 60px;
+            border-radius: 30px; color: white; display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 6px 20px rgba(59,130,246,0.4); border: none; font-size: 26px;
         }
+        .status-pill { font-size: 10px; padding: 2px 8px; border-radius: 99px; font-weight: bold; }
     </style>
 </head>
 <body class="overflow-hidden bg-slate-100">
 
-    <div id="map"></div>
+    <div class="fixed top-4 left-4 right-4 z-[1001]">
+        <div class="relative group">
+            <input id="search-input" type="text" placeholder="搜尋目的地（如：赤崁樓）..." 
+                class="w-full p-4 pl-12 rounded-2xl shadow-2xl outline-none border-none text-base bg-white/95 backdrop-blur-sm">
+            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+        </div>
+    </div>
 
-    <button id="locate-btn" class="locate-fab">📍</button>
+    <div id="map"></div>
+    <button id="locate-btn" class="locate-fab" title="回到目前位置">📍</button>
 
     <div class="drawer">
         <div class="p-3 border-b text-center">
-            <div class="w-10 h-1 bg-slate-300 rounded-full mx-auto mb-2"></div>
-            <div id="status" class="text-[11px] font-bold text-blue-600">系統就緒 - 點擊定位或地圖</div>
+            <div class="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-2"></div>
+            <div id="status" class="text-[11px] font-black text-blue-600 tracking-wider">系統就緒 - 準備搜尋停車位</div>
         </div>
         <div id="list-container">
-            <div class="p-10 text-center text-slate-400">正在等待定位數據...</div>
+            <div class="p-10 text-center text-slate-400 text-sm">輸入目的地或點擊定位開始掃描</div>
         </div>
     </div>
 
@@ -50,48 +60,80 @@
         const map = L.map('map', { zoomControl: false }).setView([22.997, 120.211], 15);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
         const markerGroup = L.layerGroup().addTo(map);
-        let userMarker;
+        let centerMarker;
 
-        // 定位處理
-        function handleLocate() {
-            document.getElementById('status').innerText = "📡 正在連線 GPS...";
+        // 搜尋功能
+        document.getElementById('search-input').onkeydown = async (e) => {
+            if (e.key === 'Enter') {
+                const query = e.target.value;
+                if (!query) return;
+                updateStatus(`🔍 正在前往：${query}`);
+                try {
+                    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
+                    const data = await res.json();
+                    if (data && data[0]) {
+                        updatePos(parseFloat(data[0].lat), parseFloat(data[0].lon), `目標：${query}`);
+                        e.target.blur();
+                    } else { alert("找不到地點，請輸入更具體的名稱"); }
+                } catch (err) { updateStatus("❌ 搜尋失敗"); }
+            }
+        };
+
+        // 定位按鈕
+        document.getElementById('locate-btn').onclick = () => {
+            updateStatus("📡 獲取 GPS 位置...");
             navigator.geolocation.getCurrentPosition(p => {
-                updatePos(p.coords.latitude, p.coords.longitude);
-            }, (err) => {
-                document.getElementById('status').innerText = "❌ 請允許位置權限";
-                alert("手機版需開啟『位置存取』權限才能使用。");
-            }, {enableHighAccuracy: true});
-        }
+                updatePos(p.coords.latitude, p.coords.longitude, "我的位置");
+            }, () => alert("請開啟定位權限"), {enableHighAccuracy: true});
+        };
 
-        function updatePos(lat, lng) {
-            if (userMarker) map.removeLayer(userMarker);
-            userMarker = L.circleMarker([lat, lng], { radius: 8, color: '#fff', fillColor: '#3b82f6', fillOpacity: 1, weight: 3 }).addTo(map);
+        // 地圖點擊校正
+        map.on('click', e => updatePos(e.latlng.lat, e.latlng.lng, "自訂搜尋點"));
+
+        function updatePos(lat, lng, label) {
+            if (centerMarker) map.removeLayer(centerMarker);
+            centerMarker = L.circleMarker([lat, lng], { radius: 10, color: '#fff', fillColor: '#ef4444', fillOpacity: 1, weight: 3 }).addTo(map);
+            centerMarker.bindPopup(label).openPopup();
             map.flyTo([lat, lng], 17);
-            fetchParking(lat, lng);
+            fetchParkingDeep(lat, lng);
         }
 
-        map.on('click', e => updatePos(e.latlng.lat, e.latlng.lng));
-        document.getElementById('locate-btn').onclick = handleLocate;
-
-        async function fetchParking(lat, lng) {
-            document.getElementById('status').innerText = "🔍 搜尋附近停車場...";
+        // --- 核心：深度聯覺搜尋引擎 ---
+        async function fetchParkingDeep(lat, lng) {
+            updateStatus("🚀 正在執行深度掃描 (多重關鍵字)...");
             const list = document.getElementById('list-container');
-            list.innerHTML = '<div class="p-10 text-center text-blue-500 animate-pulse">搜尋中...</div>';
+            list.innerHTML = '<div class="p-12 text-center text-blue-500 animate-pulse font-bold">正在打撈所有停車場資料...</div>';
             markerGroup.clearLayers();
 
-            const url = `https://nominatim.openstreetmap.org/search?format=json&q=停車場&limit=15&viewbox=${lng-0.01},${lat+0.01},${lng+0.01},${lat-0.01}&bounded=1&extratags=1`;
-
+            const offset = 0.02; // 約 2km 範圍
+            const queries = ['停車場', 'Parking', '停車']; // 多關鍵字防止漏失
+            
             try {
-                const res = await fetch(url);
-                const data = await res.json();
+                const promises = queries.map(q => 
+                    fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=40&viewbox=${lng-offset},${lat+offset},${lng+offset},${lat-offset}&bounded=1&extratags=1`)
+                    .then(r => r.json())
+                );
+
+                const results = await Promise.all(promises);
+                const combined = [].concat(...results);
                 
-                let sorted = data.map(p => ({
-                    ...p, d: Math.sqrt((p.lat-lat)**2 + (p.lon-lng)**2)
+                // 去除重複的停車場 (place_id)
+                const uniqueMap = new Map();
+                combined.forEach(p => uniqueMap.set(p.place_id, p));
+                
+                let sorted = Array.from(uniqueMap.values()).map(p => ({
+                    ...p, d: calculateDistance(lat, lng, parseFloat(p.lat), parseFloat(p.lon))
                 })).sort((a, b) => a.d - b.d);
 
                 list.innerHTML = '';
+                if(sorted.length === 0) {
+                    list.innerHTML = '<div class="p-10 text-center text-slate-400 text-sm">查無資料，請嘗試點擊地圖其他點</div>';
+                    return;
+                }
+
                 sorted.forEach(p => {
                     const name = p.display_name.split(',')[0];
+                    const distStr = p.d > 1000 ? (p.d/1000).toFixed(1)+'km' : Math.round(p.d)+'m';
                     L.marker([p.lat, p.lon]).addTo(markerGroup);
                     
                     const navUrl = `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lon}&travelmode=driving`;
@@ -99,20 +141,32 @@
                     const div = document.createElement('div');
                     div.className = "park-card";
                     div.innerHTML = `
-                        <div class="font-bold text-slate-800">${name}</div>
-                        <div class="flex gap-2 mt-2">
-                            <span class="bg-blue-50 text-blue-600 text-[10px] px-2 py-1 rounded">💰 費率：20-40元</span>
-                            <span class="bg-emerald-50 text-emerald-600 text-[10px] px-2 py-1 rounded">✓ 尚有車位</span>
+                        <div class="flex justify-between items-start">
+                            <div class="font-bold text-slate-800 text-base leading-tight">${name}</div>
+                            <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">${distStr}</span>
                         </div>
-                        <a href="${navUrl}" target="_system" class="nav-btn">🚙 立即導航</a>
+                        <div class="flex gap-2 mt-2">
+                            <span class="status-pill bg-emerald-100 text-emerald-700">✓ 車位充足</span>
+                            <span class="status-pill bg-blue-100 text-blue-700">💰 費率: 20-40元</span>
+                        </div>
+                        <a href="${navUrl}" target="_blank" class="nav-btn">🚗 開始導航 (Google Maps)</a>
                     `;
+                    div.onclick = (e) => { if(e.target.tagName !== 'A') map.panTo([p.lat, p.lon]); };
                     list.appendChild(div);
                 });
-                document.getElementById('status').innerText = "✅ 已為您推薦最近停車場";
-            } catch (e) {
-                document.getElementById('status').innerText = "❌ 網路連線逾時";
-            }
+                updateStatus(`✅ 完成掃描，共找到 ${sorted.length} 處停車點`);
+            } catch (e) { updateStatus("❌ 連線異常，請稍後再試"); }
         }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3;
+            const dLat = (lat2-lat1)*Math.PI/180;
+            const dLon = (lon2-lon1)*Math.PI/180;
+            const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        function updateStatus(m) { document.getElementById('status').innerText = m; }
     </script>
 </body>
 </html>
